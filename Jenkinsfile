@@ -61,5 +61,13 @@ pipeline {
                 }
             }
         }
+        stage('Debug') {
+            steps {
+                sh 'whoami'
+                sh 'groups'
+                sh 'ls -l /var/run/docker.sock'
+            }
+        }
+
     }
 }
