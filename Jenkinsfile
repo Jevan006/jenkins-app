@@ -1,41 +1,64 @@
 pipeline {
     agent any
+
     environment {
-        AWS_ACCOUNT_ID = '619071339639'
+        // Set your ECR repository details here
+        // The ECR_URI is the full URI you provided
+        ECR_URI = '619071339639.dkr.ecr.eu-west-1.amazonaws.com/jevan-ecr-repo'
+        // The AWS_REGION for ECR
         AWS_REGION = 'eu-west-1'
-        IMAGE_REPO_NAME = 'jenkins-app-repo'
-        IMAGE_TAG = 'latest'
+        // Use a consistent image tag, e.g., using the build number
+        IMAGE_NAME = "jevan-app:${BUILD_NUMBER}"
     }
+
     stages {
         stage('Clone Repository') {
             steps {
-                git 'https://github.com/Msocial123/jenkins-app.git'
+                // The Git clone is handled automatically by the Jenkins job configuration
+                echo "Cloning repository..."
             }
         }
-        stage('Build Image') {
+        
+        stage('Build Docker Image') {
             steps {
-                sh 'docker build -t $IMAGE_REPO_NAME:$IMAGE_TAG .'
+                script {
+                    sh 'docker build -t ${IMAGE_NAME} .'
+                }
             }
         }
-        stage('Login to ECR') {
+
+        stage('Push Docker Image to ECR') {
             steps {
-                sh 'aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com'
+                script {
+                    // Authenticate Docker with ECR using the AWS CLI
+                    sh 'aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_URI}'
+                    // Tag the image for ECR
+                    sh 'docker tag ${IMAGE_NAME} ${ECR_URI}:${IMAGE_NAME}'
+                    // Push the image to ECR
+                    sh 'docker push ${ECR_URI}:${IMAGE_NAME}'
+                }
             }
         }
-        stage('Tag and Push to ECR') {
+
+        stage('Scan Docker Image with Trivy') {
             steps {
-                sh 'docker tag $IMAGE_REPO_NAME:$IMAGE_TAG $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG'
-                sh 'docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG'
+                script {
+                    // Install Trivy if it's not already installed
+                    sh 'sudo dnf install trivy -y || true'
+                    // Scan the image for vulnerabilities
+                    sh 'trivy --exit-code 0 --format table --vuln-type os,library --severity CRITICAL,HIGH,MEDIUM,LOW ${ECR_URI}:${IMAGE_NAME}'
+                }
             }
         }
-        stage('Scan Image with Trivy') {
+        
+        stage('Deploy with Docker Compose') {
             steps {
-                sh 'docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy image --severity HIGH,CRITICAL $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG'
-            }
-        }
-        stage('Deploy Application') {
-            steps {
-                sh 'docker-compose up -d'
+                script {
+                    // Pull the newly built image from ECR
+                    sh 'docker-compose pull'
+                    // Start the container using docker-compose
+                    sh 'docker-compose up -d'
+                }
             }
         }
     }
